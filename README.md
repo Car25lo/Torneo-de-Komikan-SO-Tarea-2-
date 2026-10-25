@@ -1,3 +1,4 @@
-#Tarea 2 - Sistema Operativo 
-## Integrantes : Carlos Araya - Jasson Valverde 
-## Secciòn : 2 
+# Tarea 2 - Sistema Operativo - Torneo de Komikan 
+Integrantes : Carlos Araya - Jasson Valverde 
+
+Sección : 2 
