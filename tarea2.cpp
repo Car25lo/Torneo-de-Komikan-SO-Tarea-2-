@@ -103,8 +103,8 @@ struct parametros{
     unsigned sem_local;
 };
 
-Mesa * mesa=NULL;
-jugador *jug=NULL;
+Mesa * mesas=NULL;
+jugador *jugs=NULL;
 sem_t ctr_mesas;
 
 vector<jugador*> cola;
@@ -654,35 +654,326 @@ pthread_mutex_lock(&stat);
 
 }
 
+// clientes y machmaking
 
+    void *hiloclin(void *arg){
 
-int main(){
+    jugador*j=(jugador*)arg;
+    int esp= aleatorio(&j->sem,0,llega_max);
+    for(int t=0; t<esp && servidor_act; t+=10){
+    usleep(10*1000);
+    }
+    pthread_mutex_lock(&mtx_cola);
+    llega++;
+    if(!servidor_act || cola_cerr){
+        pthread_cond_broadcast(&cond_cola);
+        pthread_mutex_unlock(&mtx_cola);
+        return NULL;
+    }
 
-  ifstream config("config.txt");
+    cola.push_back(j);
+    pthread_cond_broadcast(&cond_cola);
+    pthread_mutex_unlock(&mtx_cola);
 
-  if(!config.is_open()){
+    imprimir("servidor llega el jugador "+ to_string(j->id));
+    esperar_sem(&j->emparejado);
+    Mesa *m=j->mesa;
+    
+    if(m==NULL)return NULL;
+
+    if(j->fallo){
+
+        timespec ts;
+        plazo_ms(&ts,aleatorio(&j->sem,300,1500));
+
+        if(sem_timedwait(&j->fin,&ts)==0) return NULL;
+        pthread_mutex_lock(&m->estmax);
+
+        if(m->partida== j->part && m->juegosAct==1 && m->aband==1){
+            m->aband=j->rol;
+            imprimir("mesa "+ to_string(m->id)+ " el jugador "+ to_string(j->id)+ " "+ string(j->rol==0?"puma":"perros")+ " falla o abandono");
+
+        }
+        pthread_mutex_unlock(&m->estmax);
+    }
+    esperar_sem(&j->fin);
+    return NULL;
+
+}
+
+void *matchmaker(void *){
+unsigned sm=semi*40503u+17u;
+    while (true){
+        jugador *a=NULL,*b=NULL;
+        pthread_mutex_lock (&mtx_cola);
+
+        while(servidor_act && cola.size()<2 && llega<total_jug){
+
+            timespec ts;
+            plazo_ms(&ts,100);
+            pthread_cond_timedwait(&cond_cola, &mtx_cola, &ts);
+        }
+
+        if(servidor_act && cola.size()>=2){
+            a=cola[0];
+            b=cola[1];
+cola.erase(cola.begin(),cola.begin()+2);
+
+        }
+        pthread_mutex_unlock(&mtx_cola);
+        if(!a) break;
+        jugador *jp=a, *jd=b;
+        if(rand_r(&sm)%2) swap(jp,jd);
+        jp->rol=0;
+        jd->rol=1;
+
+        bool tg=false;
+        while (servidor_act)
+        {
+            timespec ts;
+            plazo_ms(&ts,100);
+            if(sem_timedwait(&ctr_mesas,&ts)==0){
+                tg=true;
+                break;
+            }
+            
+        }
+        if(!tg){
+            jp->mesa=NULL;
+            jd->mesa=NULL;
+            sem_post(&jp->emparejado);
+            sem_post(&jd->emparejado);
+            break;
+        }
+        Mesa * mesa=NULL;
+        pthread_mutex_lock(&mtx_mesas);
+        for(int i=0; i<total_mesas;i++){
+            if(!mesas[i].ocup){
+                mesa= &mesas[i];
+                mesa->ocup=true;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&mtx_mesas);
+        if(mesa->estJuez){
+            pthread_join(mesa->hilo_juez,NULL);
+            mesa->estJuez=false;
+
+        }
+        inicio_mesa(mesa,jp,jd);
+        jp->mesa=jp->mesa=mesa;
+    jp->part=jd->part=mesa->partida;
+   
+    if(pthread_create(&mesa->hilo_juez,NULL,juez_mesa,mesa)!=0){
+
+            imprimir("servidor: no se pudo crear al juez correspondiente a la mesa " + to_string(mesa->id));
+
+            for(int i=0;i<tablero;i++){
+            pthread_mutex_destroy(&mesa->tablero_casillas[i].mutex);
+            } 
+
+            pthread_mutex_lock(&stat); st_activas--; pthread_mutex_unlock(&stat);
+            pthread_mutex_lock(&mtx_mesas); mesa->ocup=false; pthread_mutex_unlock(&mtx_mesas);
+            sem_post(&ctr_mesas);
+            jp->mesa=jd->mesa=NULL;
+        }
+        else{
+            mesa->estJuez=true;
+
+        }
+        sem_post(&jp->emparejado);
+        sem_post(&jd->emparejado);
+
+    }
+    if(!servidor_act){
+
+    imprimir("servidor: CTRL+C detectado. cerrando cola ");
+} 
+    int sob=0; 
+    pthread_mutex_lock(&mtx_cola);
+    cola_cerr=true
+    ;
+    for(size_t i=0; i<cola.size(); i++){
+        cola[i]->mesa=NULL;
+        sem_post(&cola[i]->emparejado);
+        sob++;
+    }
+
+    cola.clear();
+    pthread_mutex_unlock(&mtx_cola);
+    if(sob>0) imprimir("servidor: " + to_string(sob) + " jugadores sin rivales se decartaron ");
+
+    
+    return NULL;
+}
+// configuraciones del txt
+
+bool leerconfig(const char *ruta){
+    ifstream config("config.txt");
+      if(!config.is_open()){
     cout<< "no funciono el config.txt"<<endl;
 
-return 1;
+return false;
   }
-
-  config >> sem;
-  config >> tiem_in;
-  config >> tiem_max;
-  
-  config >> pos_puma;
-
-  for(int i=0; i<12; i++){
+    config >> semi;
+    config >> tiem_in;
+    config >> tiem_max;
+    config >> pos_puma;
+    pos_perros.clear();
+      for(int i=0; i<12; i++){
 
     int pos;
     config >> pos;
     pos_perros.push_back(pos);
   }
+    if(config.fail()){
+        cout<<"config invalido faltan valores "<<endl;
+        return false;
+    }
+    int p;
+    if(config>>p)lim_mov=p;
+    if(config>>p)prob_abn=p;
+    if(config>>p)llega_max=p;
+    config.close();
+    return true;
 
-  config.close();
+}
+bool validar(){
+    vector<int> usd(tablero,0);
 
-srand(sem);
+    if(tiem_in<0 || tiem_max<tiem_in){ 
+
+        cout<<"rango de retardo invalido"<<endl; 
+        return false; 
+    }
+
+    if(pos_puma<0 || pos_puma>=tablero){ 
+
+        cout<<"posicion del puma fuera de rango(0,25)"<<endl; 
+        return false; 
+    }
+
+    usd[pos_puma]=1;
+    for(size_t i=0;i<pos_perros.size();i++){
+        int p=pos_perros[i];
+
+        if(p<0 || p>=tablero || usd[p]){ 
+
+            cout<<"posicion invalida o repetida del perro "<<p<<endl; 
+            return false;
+         }
+
+        usd[p]=1;
+    }
+
+    if(lim_mov<1 || prob_abn<0 || prob_abn>100 || llega_max<0){
+        cout<<"parametro fuera de rango"<<endl;
+        return false;
+    }
+    return true;
+}
 
 
-    return 0;
+int main(int argc, char **argv){
+
+    if(argc<3 || argc>4){
+        cout<<"Uso: "<<argv[0]<<" N M config.txt "<<endl;
+        return 1;
+    }
+    char *e1;
+    char *e2;
+    long n=strtol(argv[1],&e1,10), m=strtol(argv[2],&e2,10);
+
+    if(*e1 || *e2 || n<1 || m<1 || n>10000|| m>10000){
+
+        cout << "n y m deben ser positivos" << endl;
+        return 1;
+    }
+
+    total_jug=(int)n;
+    total_mesas=(int)m;
+    if(argc==4 && !leerconfig(argv[3])) return 1;
+    if(!validar()) return 1;
+    tablero_adys();
+    
+        sem_init(&ctr_mesas,0,total_mesas);
+        mesas=new Mesa[total_mesas];
+        jugs= new jugador[total_jug];
+        for(int i=0; i<total_jug;i++){
+
+            mesas[i].id=i+1;
+            mesas[i].ocup=false;
+            mesas[i].estJuez=false;
+            mesas[i].aband=-1;
+            mesas[i].juegosAct=0;
+            pthread_mutex_init(&mesas[i].estmax,NULL);
+
+        }
+
+
+struct sigaction sa;
+    sa.sa_handler=cierre_aut;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags=0;
+    sigaction(SIGINT,&sa,NULL);
+
+    imprimir(" Torneo Komikan: N=" + to_string(total_jug) + " jugadores  M=" + to_string(total_mesas) + " mesas, semilla=" + to_string(semi) + ", retardo= " + to_string(tiem_in) + " " + to_string(tiem_max) + " ms ");
+
+pthread_t h;
+bool nm=(pthread_create(&h,NULL,matchmaker,NULL)==0);
+        for(int i=0; i<total_jug;i++){
+
+        jugador *j=&jugs[i];
+
+        j->id=i+1;
+        j->rol=0;
+        j->mesa=NULL;
+        j->part=0;
+        j->sem=semi*2654435761u+(unsigned)i*97u+7u;
+
+        j->fallo=(int)(rand_r(&j->sem)%100u)<prob_abn;
+
+        sem_init(&j->emparejado,0,0);
+        sem_init(&j->fin,0,0);
+
+        j->lanzado=nm && (pthread_create(&j->hilo,NULL,hiloclin,j)==0);
+
+        if(!j->lanzado){
+            pthread_mutex_lock(&mtx_cola);
+            llega++;
+
+            pthread_cond_broadcast(&cond_cola);
+            pthread_mutex_unlock(&mtx_cola);
+        }
+        }
+    if(nm) pthread_join(h,NULL);
+    for(int i=0; i<total_jug;i++){
+        if(jugs[i].lanzado) pthread_join(jugs[i].hilo,NULL);
+
+    }
+    
+    for(int i=0; i<total_mesas;i++){
+        if(mesas[i].estJuez) pthread_join(mesas[i].hilo_juez,NULL);
+    }
+
+        cout<< " resumen "<<endl;
+        cout <<"partidas: "<<st_partidas<< " ganan los pumas "<< st_puma << " ganan los perros: "<<st_perros<< " empates: "<< st_empates<< " abandonos: "<< st_aband << " interrumpidas: "<< st_ctrlc 
+        << " mesas simultaneas: "<< st_max_activas<< "limite de M:  "<< total_mesas<< " movimientos totales: "<< st_movs << " intento de casillas ocupadas: "<< st_conflictos<< endl;
+
+
+    for(int i=0;i<total_jug;i++){
+        sem_destroy(&jugs[i].emparejado);
+        sem_destroy(&jugs[i].fin);
+    }
+    for(int i=0;i<total_mesas;i++){
+
+    pthread_mutex_destroy(&mesas[i].estmax);
+
+    } 
+
+    sem_destroy(&ctr_mesas);
+    delete[] jugs;
+    delete[] mesas;
+    return servidor_act ? 0 : 130;
+
    }
