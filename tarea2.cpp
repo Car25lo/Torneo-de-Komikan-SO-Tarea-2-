@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <iostream>
+#include <string>
 #include <pthread.h>
 #include <signal.h> //ctr+c
 #include <unistd.h>
@@ -18,8 +19,10 @@ using namespace std;
 // definicion de hilos 
 #define perros 12
 #define pumas 1
-#define tablero 26
+#define tablero 28   // 25 de la grilla + trono + 2 nodos del techo
 #define trono 25
+#define techo_i 26
+#define techo_d 27
 #define cap_ganar 6
 // difinicion de estados de cassillas
 
@@ -35,14 +38,18 @@ struct casilla{
 
 int total_jug=0;
 int total_mesas=0;
-volatile sig_atomic_t servidor_act = 1; //para lo de ctr+c
+atomic<int> servidor_act(1); //para lo de ctr+c (atomic: la leen todos los hilos y la escribe el handler)
+struct saltos{
+    int cas_med; // casilla saltada (donde hay un perro)
+    int cas_des; // casilla destino
+};
 vector<int> ady[tablero];
 vector <saltos>saltospum[tablero];
 unsigned semi;
 
-int tiem_in;
-int tiem_max;
-int pos_puma;
+int tiem_in=50;     // retardo mínimo (ms) por defecto según el enunciado
+int tiem_max=300;    // retardo máximo (ms) por defecto según el enunciado
+int pos_puma=12;
 vector<int> pos_perros = {10,14,15,16,17,18,19,20,21,22,23,24}; // ver esto toy con duda lo voy a probar idea rara
 
 //parametros de config txt 
@@ -53,6 +60,7 @@ int llega_max=300;
 int tab_ms=2000; // para impirmir el tablero 
 
 
+struct Mesa;   // declaración adelantada
 struct jugador{
 
 int id;
@@ -122,7 +130,6 @@ int st_partidas=0, st_puma=0, st_perros=0, st_empates=0, st_aband=0, st_ctrlc=0;
 int st_activas=0, st_max_activas=0;
 int st_movs=0, st_conflictos=0;
 
-vector <saltos>saltospum[tablero];
 
 
 //utilidades
@@ -136,7 +143,9 @@ pthread_mutex_unlock(&imprime);
 
 string nomb_casilla(int a){
 
-if(a= trono) return "trono";
+if(a==trono) return "trono";
+if(a==techo_i) return "techo izq";
+if(a==techo_d) return "techo der";
 return "casilla" + to_string(a/5) + ","+ to_string(a%5);
 
 }
@@ -164,50 +173,68 @@ int aleatorio(unsigned *s, int lo, int hi){
     return lo+(int)(rand_r(s)%(unsigned)(hi-lo+1));
 }
 
-//tablero:
+// formato del tablero requerido del enunciado
 
-int ind(int f, int i){
+// (preguntar al  jefe carlos)
+ int fila_de(int a){ //tablero: grilla 0..24 (fila*5+col), trono=25, techo_i=26, techo_d=27
+    if(a==trono) return -2;
+    if(a==techo_i || a==techo_d) return -1;
+    return a/5;
+}
+int col_de(int a){ // coordenadas (fila,col): trono(-2,2) techo_i(-1,1) techo_d(-1,3)
 
-if(f==-1 && i==2) return trono;
-if(f<0 || f>4 || i<0 || i>4) return -1;
-return f*5+i;
-
-
+    if(a==trono) return 2;
+    if(a==techo_i) return 1;
+    if(a==techo_d) return 3;
+    return a%5;
+}
+int mcd(int a, int b){
+    a=abs(a); b=abs(b);
+    while(b){ int t=a%b; a=b; b=t; }
+    return a;
 }
 
 void arist(int a, int b){
 
     if(find(ady[a].begin(), ady[a].end(),b) == ady[a].end()){
 
-        ady[a].push_back(0);
-        ady[b].push_back(0);
+        ady[a].push_back(b);
+        ady[b].push_back(a);
     }
 
 }
 void tablero_adys(){
+    // grilla 5x5: solo horizontales y verticales (la figura no tiene diagonales)
     for(int f=0;f<5;f++)
-        for(int c=0;c<5;c++)
-            for(int df=-1;df<=1;df++)
-                for(int dc=-1;dc<=1;dc++){
-                    if(df==0 && dc==0) continue;
-                    if(df!=0 && dc!=0 && ((f+c)%2!=0)) continue;
-                    int j=ind(f+df,c+dc);
-                    if(j<0 || j==trono) continue;
-                    arist(f*5+c,j);
-                }
-    arist(trono,1);
+        for(int c=0;c<5;c++){
+            if(c<4) arist(f*5+c, f*5+c+1);
+            if(f<4) arist(f*5+c, (f+1)*5+c);
+        }
+    // techo y trono
+    arist(techo_i,0);
+    arist(techo_i,1);
+    arist(techo_d,3);
+    arist(techo_d,4);
+    arist(techo_i,techo_d);
+    arist(trono,techo_i);
+    arist(trono,techo_d);
     arist(trono,2);
-    arist(trono,3);
 
+    // saltos del puma: a -> b -> c en linea recta (misma direccion en ambos tramos)
     for(int a=0;a<tablero;a++){
-        int fa=(a==trono)?-1:a/5, ca=(a==trono)?2:a%5;
         for(size_t k=0;k<ady[a].size();k++){
             int b=ady[a][k];
-            int fb=(b==trono)?-1:b/5, cb=(b==trono)?2:b%5;
-            int c=ind(2*fb-fa, 2*cb-ca);
-            if(c>=0 && c!=a && find(ady[b].begin(),ady[b].end(),c)!=ady[b].end()){
-                saltos s={b,c};
-                saltospum[a].push_back(s);
+            int d1f=fila_de(b)-fila_de(a), d1c=col_de(b)-col_de(a);
+            int g1=mcd(d1f,d1c); d1f/=g1; d1c/=g1;
+            for(size_t m=0;m<ady[b].size();m++){
+                int c=ady[b][m];
+                if(c==a) continue;
+                int d2f=fila_de(c)-fila_de(b), d2c=col_de(c)-col_de(b);
+                int g2=mcd(d2f,d2c); d2f/=g2; d2c/=g2;
+                if(d1f==d2f && d1c==d2c){
+                    saltos s={b,c};
+                    saltospum[a].push_back(s);
+                }
             }
         }
     }
@@ -218,7 +245,7 @@ bool mov_val(int in, int des, int med){
     if(med<0) return find(ady[in].begin(),ady[in].end(),des) != ady[in].end();
     
     for(size_t i=0; i<saltospum[in].size(); i++) {
-        if(saltospum[in][i].cas_med=med && saltospum[in][i].cas_des=des) return true;
+        if(saltospum[in][i].cas_med==med && saltospum[in][i].cas_des==des) return true;
 
     }
     return false;
@@ -266,7 +293,7 @@ void *actperro(void *arg){
         pthread_mutex_lock(&mesa->tablero_casillas[lock2].mutex);
 
     
-        if(mesa->tablero_casillas[act].estado != PERRO && mesa->tablero_casillas[act].idpie==id){
+        if(mesa->tablero_casillas[act].estado != PERRO || mesa->tablero_casillas[act].idpie != id){
     pthread_mutex_unlock(&mesa->tablero_casillas[lock2].mutex);
     pthread_mutex_unlock(&mesa->tablero_casillas[lock1].mutex);
         break; 
@@ -307,17 +334,11 @@ if (mov){
     return NULL; 
 
 }
-struct saltos{
-    int cas_med; // si hay un perro
-    int cas_des; // el destino
-
-};
 
 //logica del puma
 
 void *actpuma(void *arg){
 parametros *prmt=(parametros*) arg;
-int id= prmt->id;
 Mesa *mesa= prmt->mesa_utl;
 
  while(mesa->juegosAct==1 && servidor_act==1){
@@ -359,15 +380,7 @@ Mesa *mesa= prmt->mesa_utl;
             comperro=true;
 
             
-/*
-            if(mesa->perros_cap>=6){
-
-                cout<< "la MESA: "<< mesa->id<< "EL PUMA A GANADO con un total de "<<mesa->perros_cap <<  endl;
-                mesa->juegosAct=0;
-
-            }
-
-        }*/
+        }
 
             pthread_mutex_unlock(&mesa->tablero_casillas[c3].mutex);
             pthread_mutex_unlock(&mesa->tablero_casillas[c2].mutex);
@@ -379,7 +392,6 @@ Mesa *mesa= prmt->mesa_utl;
             break;}
         
 
-    }
     }
 if(!comperro){
             int opc= ady[act].size();
@@ -432,9 +444,9 @@ if(!comperro){
 
 void cierre_aut(int sig){
 (void)sig;
+    int e=errno;      // el handler no debe alterar errno
     servidor_act=0;
-   
-
+    errno=e;
 }
 // juez de mesa todo
 void bloquear(Mesa *m){
@@ -451,18 +463,18 @@ bool puma_atrapado(Mesa *m){
 
     int p=-1;
     for(int i=0; i<tablero;i++){
-        if(m->tablero_casillas[i].estado=PUMA){
+        if(m->tablero_casillas[i].estado==PUMA){
             p=i; 
             break;}}
 
         if(p<0) return false;
 
         for(size_t j = 0; j<ady[p].size();j++){
-            if(m->tablero_casillas[ady[p][j]].estado=VACIA) return false;
+            if(m->tablero_casillas[ady[p][j]].estado==VACIA) return false;
         }
 
 for(size_t k=0; k<saltospum[p].size();k++){
-    if(m->tablero_casillas[saltospum[p][k].cas_med].estado=PERRO && m->tablero_casillas[saltospum[p][k].cas_des].estado=VACIA) return false;
+    if(m->tablero_casillas[saltospum[p][k].cas_med].estado==PERRO && m->tablero_casillas[saltospum[p][k].cas_des].estado==VACIA) return false;
 }
     return true ;
 
@@ -475,9 +487,11 @@ for(size_t k=0; k<saltospum[p].size();k++){
     }
 // revisar esto 
 void imprimir_tablero(Mesa *m, const estados_casillas *esc, string t){
+    pthread_mutex_lock(&imprime);   // agregar un mitex , esto evita que se mezclen
     cout << "\nMesa " << m->id << " " << t << endl;
-    cout << "   trono: " << (esc[25] == VACIA ? '^' : obt_sim(esc[25])) << "\n";
-    
+    cout << string(14,' ') << obt_sim(esc[trono]) << "   <- trono\n"; // mejoramiento del tablero
+    cout << string(12,' ') << obt_sim(esc[techo_i]) << "   " << obt_sim(esc[techo_d]) << "   <- techo\n"; // mejoramiento del tablero
+
     for(int f = 0; f < 5; f++){
         cout << "          ";
         for(int c = 0; c < 5; c++) {
@@ -486,6 +500,7 @@ void imprimir_tablero(Mesa *m, const estados_casillas *esc, string t){
         cout << "\n";
     }
     cout << endl;
+    pthread_mutex_unlock(&imprime);
 }
 
 void inicio_mesa(Mesa *m, jugador *jp, jugador *jd){
@@ -530,7 +545,7 @@ void *juez_mesa(void*arg){
     parametros ppumas;
 bool okpum=false, okperro[perros];
 
-imprimir("Mesa "+ to_string(mesa->id)+ " Inicio la partida: Jugador "+ to_string(mesa->jperro->id)+ " (PUMA) vs Jugador "+ to_string(mesa->jperro->id)+ " (PERROS)");
+imprimir("Mesa "+ to_string(mesa->id)+ " Inicio la partida: Jugador "+ to_string(mesa->jpuma->id)+ " (PUMA) vs Jugador "+ to_string(mesa->jperro->id)+ " (PERROS)");
 
     ppumas.id=1;
     ppumas.mesa_utl=mesa;
@@ -575,7 +590,7 @@ while(true){
      bool accr=puma_atrapado(mesa);
     debloquear(mesa);
 
-    if(mesa->perros_cap == cap_ganar){
+    if(mesa->perros_cap >= cap_ganar){
     fin=FIN_CAPT;
     gan=0; 
     break;
@@ -611,6 +626,7 @@ for(int i =0; i<perros; i++){
 
     if(okperro[i]) pthread_join(hperro[i],NULL);
 }
+if(okpum) pthread_join(hpuma,NULL);   // faltaba esperar al puma antes de destruir los mutex
 
 for(int i=0; i<tablero;i++)snap[i]=mesa->tablero_casillas[i].estado;
 imprimir_tablero(mesa,snap, "tablero final");
@@ -689,7 +705,7 @@ pthread_mutex_lock(&stat);
         if(sem_timedwait(&j->fin,&ts)==0) return NULL;
         pthread_mutex_lock(&m->estmax);
 
-        if(m->partida== j->part && m->juegosAct==1 && m->aband==1){
+        if(m->partida== j->part && m->juegosAct==1 && m->aband==-1){
             m->aband=j->rol;
             imprimir("mesa "+ to_string(m->id)+ " el jugador "+ to_string(j->id)+ " "+ string(j->rol==0?"puma":"perros")+ " falla o abandono");
 
@@ -761,7 +777,7 @@ cola.erase(cola.begin(),cola.begin()+2);
 
         }
         inicio_mesa(mesa,jp,jd);
-        jp->mesa=jp->mesa=mesa;
+        jp->mesa=jd->mesa=mesa;
     jp->part=jd->part=mesa->partida;
    
     if(pthread_create(&mesa->hilo_juez,NULL,juez_mesa,mesa)!=0){
@@ -809,7 +825,7 @@ cola.erase(cola.begin(),cola.begin()+2);
 // configuraciones del txt
 
 bool leerconfig(const char *ruta){
-    ifstream config("config.txt");
+    ifstream config(ruta);
       if(!config.is_open()){
     cout<< "no funciono el config.txt"<<endl;
 
@@ -849,7 +865,7 @@ bool validar(){
 
     if(pos_puma<0 || pos_puma>=tablero){ 
 
-        cout<<"posicion del puma fuera de rango(0,25)"<<endl; 
+        cout<<"posicion del puma fuera de rango(0,27)"<<endl; 
         return false; 
     }
 
@@ -877,7 +893,7 @@ bool validar(){
 int main(int argc, char **argv){
 
     if(argc<3 || argc>4){
-        cout<<"Uso: "<<argv[0]<<" N M config.txt "<<endl;
+        cout<<"Uso: "<<argv[0]<<" N M [config.txt]"<<endl;
         return 1;
     }
     char *e1;
@@ -899,7 +915,7 @@ int main(int argc, char **argv){
         sem_init(&ctr_mesas,0,total_mesas);
         mesas=new Mesa[total_mesas];
         jugs= new jugador[total_jug];
-        for(int i=0; i<total_jug;i++){
+        for(int i=0; i<total_mesas;i++){
 
             mesas[i].id=i+1;
             mesas[i].ocup=false;
@@ -958,7 +974,7 @@ bool nm=(pthread_create(&h,NULL,matchmaker,NULL)==0);
 
         cout<< " resumen "<<endl;
         cout <<"partidas: "<<st_partidas<< " ganan los pumas "<< st_puma << " ganan los perros: "<<st_perros<< " empates: "<< st_empates<< " abandonos: "<< st_aband << " interrumpidas: "<< st_ctrlc 
-        << " mesas simultaneas: "<< st_max_activas<< "limite de M:  "<< total_mesas<< " movimientos totales: "<< st_movs << " intento de casillas ocupadas: "<< st_conflictos<< endl;
+        << " mesas simultaneas: "<< st_max_activas<< " | limite de M: "<< total_mesas<< " movimientos totales: "<< st_movs << " intento de casillas ocupadas: "<< st_conflictos<< endl;
 
 
     for(int i=0;i<total_jug;i++){
