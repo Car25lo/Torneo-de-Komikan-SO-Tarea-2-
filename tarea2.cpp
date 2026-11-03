@@ -176,12 +176,12 @@ int aleatorio(unsigned *s, int lo, int hi){
 // formato del tablero requerido del enunciado
 
 
- int fila_de(int a){ //tablero: grilla 0..24 (fila*5+col), trono=25, techo_i=26, techo_d=27
+ int fila_de(int a){ 
     if(a==trono) return -2;
     if(a==techo_i || a==techo_d) return -1;
     return a/5;
 }
-int col_de(int a){ // coordenadas (fila,col): trono(-2,2) techo_i(-1,1) techo_d(-1,3)
+int col_de(int a){ 
 
     if(a==trono) return 2;
     if(a==techo_i) return 1;
@@ -220,7 +220,7 @@ void tablero_adys(){
     arist(trono,techo_d);
     arist(trono,2);
 
-    // saltos del puma: a -> b -> c en linea recta (misma direccion en ambos tramos)
+    
     for(int a=0;a<tablero;a++){
         for(size_t k=0;k<ady[a].size();k++){
             int b=ady[a][k];
@@ -481,7 +481,7 @@ for(size_t k=0; k<saltospum[p].size();k++){
     }
 // revisar esto 
 void imprimir_tablero(Mesa *m, const estados_casillas *esc, string t){
-    pthread_mutex_lock(&imprime);   // agregar un mitex , esto evita que se mezclen
+    pthread_mutex_lock(&imprime);   // agregar un mutex , esto evita que se mezclen
     cout << "\nMesa " << m->id << " " << t << endl;
     cout << string(14,' ') << obt_sim(esc[trono]) << "   <- trono\n"; // mejoramiento del tablero
     cout << string(12,' ') << obt_sim(esc[techo_i]) << "   " << obt_sim(esc[techo_d]) << "   <- techo\n"; // mejoramiento del tablero
