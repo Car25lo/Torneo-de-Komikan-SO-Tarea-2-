@@ -175,7 +175,7 @@ int aleatorio(unsigned *s, int lo, int hi){
 
 // formato del tablero requerido del enunciado
 
-// (preguntar al  jefe carlos)
+
  int fila_de(int a){ //tablero: grilla 0..24 (fila*5+col), trono=25, techo_i=26, techo_d=27
     if(a==trono) return -2;
     if(a==techo_i || a==techo_d) return -1;
@@ -301,8 +301,6 @@ void *actperro(void *arg){
 
 bool mov=false;
 
-           // cout<< "la mesa: "<< mesa->id << "Perro "<<id<< "se movio "<<act << "hacia" << dest<< endl;
-
         if(mesa->tablero_casillas[dest].estado == VACIA){
             mesa->tablero_casillas[act].estado=VACIA;
             mesa->tablero_casillas[dest].estado=PERRO;
@@ -415,11 +413,7 @@ if(!comperro){
                 prmt->cassact=des;
                 mesa->mov++;
                 mov=true;
-
-                //cout<< "mesa: "<< mesa->id << "el puma se desplazo: "<<act<< "hacia "<<des<<endl;
-
-
-
+                
             }
             else{
                 mesa->conflic++;
