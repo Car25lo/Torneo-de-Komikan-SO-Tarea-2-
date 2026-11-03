@@ -73,7 +73,7 @@ Numeración de las posiciones
 * SIGINT (Ctrl + C): Se dejan de aceptar a los jugadores, luego las partidas activas terminan con resultado "interrumpida", se hace un `join` de todos los hilos y se liberan mutex, semáforos y memoria. El programa termina con código 130.
 
 ### Limitaciones 
-* Cada fichas deciden sus movimientos de manera al azar, por lo que los perros algunas vez logran acorralar al puma con la configuración (config.txt) por defecto.
+* Cada fichas deciden sus movimientos de manera al azar, por lo que los perros algunas veces logran acorralar al puma con la configuración (config.txt) por defecto.
 * Si un movimiento ocurre justo en el momento en que el juez declara el resultado, el tablero final puede mostrar esa última jugada.
 
 
