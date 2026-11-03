@@ -12,7 +12,7 @@ En la terminal se debe ingresar el siguiente comando
 ```bash
 g++ -Wall -Wextra -std=c++17 -pthread tarea2.cpp -o torneo
 ```
-##Ejecutar
+## Ejecutar
 
 ```bash
 ./torneo N M [config.txt]
@@ -39,6 +39,56 @@ Para el archivo config.txt , esta definido lo siguiente:
 * Tiempo maximo de llegada de los jugadores en ms (por defecto son 300)
 
 Aunque los ultimos 3 puntos son opcionales. 
+Ejemplo (nuestro archivo config.txt)
+
+```
+12345 // semillas
+50 300 // retardo mínimo y máximo en ms
+25 // posición inicial del puma
+10 14 15 16 17 18 19 20 21 22 23 24 // posición inicial de los perros
+600 0 300 // el limite de movimiento , porcentaje de jugadores que abandonan, tiempo máximo de llegada de los jugadores en ms
+```
+Numeración de las posiciones 
+
+```
+      25
+   26    27
+ 0  1  2  3  4
+ 5  6  7  8  9
+10 11 12 13 14
+15 16 17 18 19
+20 21 22 23 24
+```
+0 a 24 es la grilla 5x5, la casilla 25 es el trono y 26 y 27 son los nodos del techo. Las casillas no se -pueden repetirse.
+
+## Decisiones de Sincronización
+* Al usar un mutex por casilla (`pthread_mutex_t`), los movimientos toman el origen y el destino de manera ascendente del índice, el salto del puma utiliza 3 casillas, también de forma ordenada, de tal forma evitar el Deadlock y garantizar que haya una ficha por casilla.
+* El Juez toma las 28 casillas ordenadamente para obtener una copia de manera consistente del tablero y evaluar la victoria.
+* El máximo de M mesas es implementada mediante un semáforo (`ctr_mesas`) inicializando en M.
+* La cola de jugadores es el uso mutuo de `mtx_cola` y `cond_cola` que avisa entre los jugadores y mesas, semaforos `emparejados` y `fin`.
+* Los contadores de mesa y banderas (flags) de Ctrl + C utilizando `atomic<int>`.
+
+### Fallos y Ctrl + C
+* Abandono: Un jugador marcado como fallido (según el % en el archivo config.txt) abandona la partida, luego el juez le declara ganador al oponente, detiene las fichas y destruye los mutex de la mesa.
+* SIGINT (Ctrl + C): Se dejan de aceptar a los jugadores, luego las partidas activas terminan con resultado "interrumpida", se hace un `join` de todos los hilos y se liberan mutex, semáforos y memoria. El programa termina con código 130.
+
+### Limitaciones 
+* Cada fichas deciden sus movimientos de manera al azar, por lo que los perros algunas vez logran acorralar al puma con la configuración (config.txt) por defecto.
+* Si un movimiento ocurre justo en el momento en que el juez declara el resultado, el tablero final puede mostrar esa última jugada.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
