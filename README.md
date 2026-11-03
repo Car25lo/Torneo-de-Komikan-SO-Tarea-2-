@@ -10,6 +10,10 @@ En la terminal se debe ingresar el siguiente comando
 g++ -Wall -Wextra -std=c++17 tarea2.cpp -o torneo
 ```
 Luego ingresar el archivo config.txt y su respectivos valores de N clientes y M mesas
+```bash
+./torneo N M [config.txt]
+```
+ejemplo:
 
 ```bash
 ./torneo 8 2 config.txt
