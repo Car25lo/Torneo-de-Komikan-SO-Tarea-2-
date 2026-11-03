@@ -1,5 +1,5 @@
-12345 ## semillas
-50 300 ## retardo minimo y maximo 
-25 ## posicion inicial
-10 14 15 16 17 18 19 20 21 22 23 24 ## posicion inicial de los perros
-600 0 300 ## el limite de movimiento , porcentaje de jugadores que abandonan, tiempo maximo de llegada de los jugadores en ms
+12345 // semillas
+50 300 // retardo mínimo y máximo en ms
+25 // posición inicial del puma
+10 14 15 16 17 18 19 20 21 22 23 24 // posición inicial de los perros
+600 0 300 // el limite de movimiento , porcentaje de jugadores que abandonan, tiempo máximo de llegada de los jugadores en ms
